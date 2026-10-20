@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accelerometer in 3D</title>
+<style>
+  :root {
+    --bg: #f2f5f7;
+    --panel: #ffffff;
+    --ink: #14212b;
+    --muted: #64768a;
+    --line: #d7dfe5;
+    --accent: #0f766e;
+    --warn: #c2410c;
+    --ax: #e5484d;
+    --ay: #30a46c;
+    --az: #3e63dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1a22;
+      --panel: #16242f;
+      --ink: #e6edf2;
+      --muted: #8fa3b3;
+      --line: #284050;
+      --accent: #4fd1c5;
+      --warn: #f6ad55;
+      --ax: #ff6b6b;
+      --ay: #4ade80;
+      --az: #7c9cff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    line-height: 1.4;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px 28px;
+    align-items: end;
+    justify-content: space-between;
+    padding: 20px 28px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  h1 { margin: 0; font-size: 1.4rem; font-weight: 600; }
+  #status { color: var(--muted); font-size: .9rem; margin-top: 4px; }
+  #status.ok { color: var(--accent); }
+  form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+  label { display: grid; gap: 2px; font-size: .8rem; color: var(--muted); }
+  input {
+    font: inherit;
+    padding: 7px 9px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--ink);
+    min-width: 8rem;
+    width: 10rem;
+  }
+  input.short { width: 6rem; min-width: 6rem; }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button {
+    font: inherit;
+    padding: 8px 16px;
+    border: 0;
+    border-radius: 4px;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+  }
+  button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  @media (prefers-color-scheme: dark) { button:not(.quiet) { color: #07211e; } }
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 260px;
+    gap: 16px;
+    padding: 20px 28px 40px;
+  }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 12px;
+  }
+  canvas { display: block; width: 100%; }
+  #view { height: 420px; cursor: grab; touch-action: none; }
+  #view.drag { cursor: grabbing; }
+  #hist { height: 150px; margin-top: 16px; }
+  .hint { font-size: .8rem; color: var(--muted); margin: 8px 0 0; }
+  .read { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 14px; }
+  .read dt { color: var(--muted); font-size: .85rem; align-self: center; }
+  .read dd { margin: 0; font-size: 1.35rem; font-variant-numeric: tabular-nums; text-align: right; }
+  .read dd small { font-size: .8rem; color: var(--muted); }
+  #state { font-size: 1.1rem; font-weight: 600; margin: 4px 0 14px; }
+  #state.shock { color: var(--warn); }
+  .legend { list-style: none; margin: 0; padding: 0; font-size: .85rem; color: var(--muted); }
+  .legend li { margin: 4px 0; }
+  .legend i { display: inline-block; width: 18px; height: 3px; margin-right: 8px; vertical-align: middle; border-radius: 2px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Accelerometer in 3D</h1>
+    <div id="status" role="status">Not connected</div>
+  </div>
+  <form id="login">
+    <label>Host
+      <input id="host" value="defence4sme.cloud.shiftr.io" required>
+    </label>
+    <label>Username
+      <input id="user" autocomplete="off" required>
+    </label>
+    <label>Token secret
+      <input id="pass" type="password" autocomplete="off" required>
+    </label>
+    <label>Board name
+      <input id="board" class="short" value="anna" autocomplete="off" required>
+    </label>
+    <button type="submit">Connect</button>
+    <button type="button" class="quiet" id="demo">Demo (no board)</button>
+  </form>
+</header>
+
+<main>
+  <section>
+    <div class="panel">
+      <canvas id="view" aria-label="3D view of the accelerometer"></canvas>
+      <p class="hint">Drag to turn the camera. The board tilts like the sensor does. The orange arrow shows the direction you shake or push it. Yaw (turning flat on the table) cannot be measured by an accelerometer.</p>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <canvas id="hist" aria-label="History of the three axes"></canvas>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div id="state">Waiting for data</div>
+    <dl class="read">
+      <dt>x</dt><dd id="rx">0.00 <small>g</small></dd>
+      <dt>y</dt><dd id="ry">0.00 <small>g</small></dd>
+      <dt>z</dt><dd id="rz">0.00 <small>g</small></dd>
+      <dt>total</dt><dd id="rt">0.00 <small>g</small></dd>
+      <dt>roll</dt><dd id="rroll">0 <small>&deg;</small></dd>
+      <dt>pitch</dt><dd id="rpitch">0 <small>&deg;</small></dd>
+    </dl>
+    <ul class="legend">
+      <li><i style="background:var(--ax)"></i>sensor x axis</li>
+      <li><i style="background:var(--ay)"></i>sensor y axis</li>
+      <li><i style="background:var(--az)"></i>sensor z axis</li>
+      <li><i style="background:var(--warn)"></i>shake / push</li>
+      <li><i style="background:var(--muted)"></i>gravity (always down)</li>
+    </ul>
+  </aside>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>
+  // ---------- state ----------
+  const S = {
+    a: [0, 0, 1],        // latest measured acceleration (sensor frame, in g)
+    ad: [0, 0, 1],       // smoothed for display
+    g: [0, 0, 1],        // slow estimate of gravity
+    lastXyz: 0,          // time of the last fast "x,y,z" message
+    lastMsg: 0,
+    demo: false,
+    connected: false,
+    t: performance.now(),
+    yaw: -0.55,          // camera
+    pitch: 0.45,
+    hist: []             // [x, y, z] samples
+  };
+  const HIST_LEN = 300;
+
+  const $ = (id) => document.getElementById(id);
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  // ---------- small 3D maths ----------
+  const mulMV = (m, v) => [
+    m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+    m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+    m[6] * v[0] + m[7] * v[1] + m[8] * v[2]
+  ];
+  const mulMM = (a, b) => {
+    const r = new Array(9);
+    for (let i = 0; i < 3; i++)
+      for (let j = 0; j < 3; j++)
+        r[i * 3 + j] = a[i * 3] * b[j] + a[i * 3 + 1] * b[3 + j] + a[i * 3 + 2] * b[6 + j];
+    return r;
+  };
+  const rotX = (a) => [1, 0, 0, 0, Math.cos(a), -Math.sin(a), 0, Math.sin(a), Math.cos(a)];
+  const rotY = (a) => [Math.cos(a), 0, Math.sin(a), 0, 1, 0, -Math.sin(a), 0, Math.cos(a)];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const len = (a) => Math.hypot(a[0], a[1], a[2]);
+  const norm = (a) => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+  // Rotation that turns the unit vector u (the sensor's "up") onto world up (0,1,0).
+  function rotUpFrom(u) {
+    const c = u[1];
+    if (c > 0.99999) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    if (c < -0.99999) return [1, 0, 0, 0, -1, 0, 0, 0, -1];
+    const kx = -u[2], ky = 0, kz = u[0];                 // k = u x up
+    const K = [0, -kz, ky, kz, 0, -kx, -ky, kx, 0];
+    const K2 = mulMM(K, K);
+    const f = 1 / (1 + c);
+    const I = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    return I.map((v, i) => v + K[i] + K2[i] * f);
+  }
+
+  // ---------- canvas helpers ----------
+  function fit(canvas) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, w, h };
+  }
+
+  // ---------- 3D drawing ----------
+  const BOARD = { x: 1.45, y: 1.0, z: 0.12 };
+  const CORNERS = [];
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1])
+    CORNERS.push([sx * BOARD.x, sy * BOARD.y, sz * BOARD.z]);
+  const idx = (sx, sy, sz) => ((sx > 0) << 2) | ((sy > 0) << 1) | (sz > 0);
+  const FACES = [
+    { n: [0, 0, 1],  v: [idx(-1,-1,1), idx(1,-1,1), idx(1,1,1), idx(-1,1,1)], top: true },
+    { n: [0, 0, -1], v: [idx(-1,-1,-1), idx(-1,1,-1), idx(1,1,-1), idx(1,-1,-1)] },
+    { n: [1, 0, 0],  v: [idx(1,-1,-1), idx(1,1,-1), idx(1,1,1), idx(1,-1,1)] },
+    { n: [-1, 0, 0], v: [idx(-1,-1,-1), idx(-1,-1,1), idx(-1,1,1), idx(-1,1,-1)] },
+    { n: [0, 1, 0],  v: [idx(-1,1,-1), idx(-1,1,1), idx(1,1,1), idx(1,1,-1)] },
+    { n: [0, -1, 0], v: [idx(-1,-1,-1), idx(1,-1,-1), idx(1,-1,1), idx(-1,-1,1)] }
+  ];
+  const LIGHT = norm([0.3, 0.8, 0.5]);
+
+  function draw3D() {
+    const { ctx, w, h } = fit($('view'));
+    ctx.clearRect(0, 0, w, h);
+
+    const CAM = 7, F = h * 1.6, cx = w / 2, cy = h * 0.52;
+    const V = mulMM(rotX(S.pitch), rotY(S.yaw));        // camera rotation
+    const gUnit = len(S.g) < 0.05 ? [0, 1, 0] : norm(S.g);
+    const R = rotUpFrom(gUnit);                          // board orientation
+
+    const project = (p) => {                             // p already in view space
+      const d = CAM - p[2];
+      return [cx + F * p[0] / d, cy - F * p[1] / d];
+    };
+    const world = (p) => mulMV(V, p);
+    const model = (p) => mulMV(V, mulMV(R, p));
+
+    // ground grid
+    ctx.strokeStyle = css('--line');
+    ctx.lineWidth = 1;
+    const GY = -1.9;
+    for (let i = -3; i <= 3; i++) {
+      for (const [a, b] of [[[i, GY, -3], [i, GY, 3]], [[-3, GY, i], [3, GY, i]]]) {
+        const p = project(world(a)), q = project(world(b));
+        ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+      }
+    }
+
+    // gravity arrow (always straight down in the world)
+    arrow(ctx, project, world([0, 0, 0]), world([0, -1.7, 0]), css('--muted'), 2, true);
+
+    // board faces (convex box: back-face culling is enough, no sorting needed)
+    const vc = CORNERS.map(model);
+    const accent = css('--accent');
+    for (const f of FACES) {
+      const n = mulMV(V, mulMV(R, f.n));
+      const c = f.v.reduce((s, i) => [s[0] + vc[i][0] / 4, s[1] + vc[i][1] / 4, s[2] + vc[i][2] / 4], [0, 0, 0]);
+      const toCam = [-c[0], -c[1], CAM - c[2]];
+      if (dot(n, toCam) <= 0) continue;
+      const b = 0.35 + 0.65 * Math.max(0, dot(n, LIGHT));
+      ctx.fillStyle = f.top ? shade(accent, b) : `hsl(205 12% ${22 + 38 * b}%)`;
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      f.v.forEach((i, k) => {
+        const p = project(vc[i]);
+        if (k === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+      });
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+
+    // sensor axes, drawn with the board
+    const axes = [['X', [2.1, 0, 0], '--ax'], ['Y', [0, 1.6, 0], '--ay'], ['Z', [0, 0, 1.5], '--az']];
+    ctx.font = '600 13px "Avenir Next", "Segoe UI", system-ui, sans-serif';
+    for (const [label, p, color] of axes) {
+      const a = model([0, 0, 0]), b = model(p);
+      arrow(ctx, project, a, b, css(color), 3, false);
+      const t = project(model([p[0] * 1.12, p[1] * 1.12, p[2] * 1.12]));
+      ctx.fillStyle = css(color);
+      ctx.fillText(label, t[0] - 4, t[1] + 4);
+    }
+
+    // shake / push arrow: measured minus gravity, shown in world space
+    const lin = [S.ad[0] - S.g[0], S.ad[1] - S.g[1], S.ad[2] - S.g[2]];
+    if (len(lin) > 0.08) {
+      const wv = mulMV(R, lin).map((v) => v * 2.4);
+      arrow(ctx, project, world([0, 0, 0]), world(wv), css('--warn'), 5, false);
+    }
+  }
+
+  function arrow(ctx, project, a, b, color, width, dashed) {
+    const p = project(a), q = project(b);
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = width;
+    ctx.setLineDash(dashed ? [6, 5] : []);
+    ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+    ctx.setLineDash([]);
+    const ang = Math.atan2(q[1] - p[1], q[0] - p[0]);
+    const hs = 6 + width * 1.5;
+    ctx.beginPath();
+    ctx.moveTo(q[0], q[1]);
+    ctx.lineTo(q[0] - hs * Math.cos(ang - 0.45), q[1] - hs * Math.sin(ang - 0.45));
+    ctx.lineTo(q[0] - hs * Math.cos(ang + 0.45), q[1] - hs * Math.sin(ang + 0.45));
+    ctx.closePath(); ctx.fill();
+  }
+
+  // brightness-scaled version of a "#rrggbb" or "rgb(...)" colour
+  function shade(color, b) {
+    const m = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    const rgb = m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [15, 118, 110];
+    return `rgb(${rgb.map((v) => Math.round(v * b)).join(',')})`;
+  }
+
+  // ---------- history graph ----------
+  function drawHist() {
+    const { ctx, w, h } = fit($('hist'));
+    ctx.clearRect(0, 0, w, h);
+    const RANGE = 3;                                    // +-3 g shown
+    const y = (v) => h / 2 - (Math.max(-RANGE, Math.min(RANGE, v)) / RANGE) * (h / 2 - 8);
+    ctx.strokeStyle = css('--line'); ctx.lineWidth = 1;
+    ctx.fillStyle = css('--muted');
+    ctx.font = '11px "Avenir Next", "Segoe UI", system-ui, sans-serif';
+    for (const g of [-2, -1, 0, 1, 2]) {
+      ctx.beginPath(); ctx.moveTo(30, y(g)); ctx.lineTo(w, y(g)); ctx.stroke();
+      ctx.fillText(g + ' g', 2, y(g) + 4);
+    }
+    const colors = ['--ax', '--ay', '--az'];
+    for (let k = 0; k < 3; k++) {
+      ctx.strokeStyle = css(colors[k]); ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      S.hist.forEach((s, i) => {
+        const x = 30 + (i / (HIST_LEN - 1)) * (w - 30);
+        if (i === 0) ctx.moveTo(x, y(s[k])); else ctx.lineTo(x, y(s[k]));
+      });
+      ctx.stroke();
+    }
+  }
+  setInterval(() => {
+    S.hist.push([S.ad[0], S.ad[1], S.ad[2]]);
+    if (S.hist.length > HIST_LEN) S.hist.shift();
+  }, 50);
+
+  // ---------- readout ----------
+  function readout() {
+    const [x, y, z] = S.ad;
+    const total = len(S.ad);
+    const [gx, gy, gz] = S.g;
+    const roll = Math.atan2(gy, gz) * 180 / Math.PI;
+    const pitch = Math.atan2(-gx, Math.hypot(gy, gz)) * 180 / Math.PI;
+    $('rx').firstChild.nodeValue = x.toFixed(2) + ' ';
+    $('ry').firstChild.nodeValue = y.toFixed(2) + ' ';
+    $('rz').firstChild.nodeValue = z.toFixed(2) + ' ';
+    $('rt').firstChild.nodeValue = total.toFixed(2) + ' ';
+    $('rroll').firstChild.nodeValue = Math.round(roll) + ' ';
+    $('rpitch').firstChild.nodeValue = Math.round(pitch) + ' ';
+
+    const lin = len([x - gx, y - gy, z - gz]);
+    const st = $('state');
+    st.classList.remove('shock');
+    if (!S.demo && !S.connected) st.textContent = 'Not connected';
+    else if (!S.demo && performance.now() - S.lastMsg > 5000) st.textContent = 'No data from this board';
+    else if (total < 0.3) { st.textContent = 'Free fall?'; st.classList.add('shock'); }
+    else if (total > 2.5) { st.textContent = 'SHOCK'; st.classList.add('shock'); }
+    else if (lin > 0.15) st.textContent = 'Moving';
+    else st.textContent = 'At rest';
+  }
+
+  // ---------- animation loop ----------
+  function demoStep(t) {
+    const shake = Math.max(0, Math.sin(t * 0.35)) ** 6;      // occasional shaking
+    S.a = [
+      0.75 * Math.sin(t * 0.6) + 1.2 * shake * Math.sin(t * 14),
+      0.6 * Math.cos(t * 0.45) + 0.8 * shake * Math.cos(t * 11),
+      0
+    ];
+    S.a[2] = Math.sqrt(Math.max(0, 1 - S.a[0] ** 2 * 0.5 - S.a[1] ** 2 * 0.5));
+  }
+
+  function frame(now) {
+    const dt = Math.min(0.1, (now - S.t) / 1000);
+    S.t = now;
+    if (S.demo) demoStep(now / 1000);
+    const ks = 1 - Math.exp(-dt / 0.12);
+    const kg = 1 - Math.exp(-dt / 0.8);
+    for (let i = 0; i < 3; i++) {
+      S.ad[i] += (S.a[i] - S.ad[i]) * ks;
+      S.g[i] += (S.ad[i] - S.g[i]) * kg;
+    }
+    draw3D();
+    drawHist();
+    readout();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---------- camera drag ----------
+  const view = $('view');
+  let dragging = false, lx = 0, ly = 0;
+  view.addEventListener('pointerdown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; view.classList.add('drag'); view.setPointerCapture(e.pointerId); });
+  view.addEventListener('pointerup', () => { dragging = false; view.classList.remove('drag'); });
+  view.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    S.yaw += (e.clientX - lx) * 0.01;
+    S.pitch = Math.max(-1.4, Math.min(1.4, S.pitch + (e.clientY - ly) * 0.01));
+    lx = e.clientX; ly = e.clientY;
+  });
+
+  // ---------- MQTT ----------
+  let client = null;
+  const setStatus = (text, ok) => { $('status').textContent = text; $('status').className = ok ? 'ok' : ''; };
+
+  function onData(topic, text) {
+    const now = performance.now();
+    if (topic.endsWith('/accel/xyz')) {
+      const p = text.split(',').map(parseFloat);
+      if (p.length === 3 && p.every(Number.isFinite)) { S.a = p; S.lastXyz = now; S.lastMsg = now; }
+    } else if (now - S.lastXyz > 1500) {                  // slow per-axis topics, only if no fast one
+      const v = parseFloat(text);
+      if (!Number.isFinite(v)) return;
+      if (topic.endsWith('/accel/x')) { S.a[0] = v; S.lastMsg = now; }
+      else if (topic.endsWith('/accel/y')) { S.a[1] = v; S.lastMsg = now; }
+      else if (topic.endsWith('/accel/z')) { S.a[2] = v; S.lastMsg = now; }
+    }
+  }
+
+  $('login').addEventListener('submit', (e) => {
+    e.preventDefault();
+    S.demo = false;
+    if (client) client.end(true);
+    const host = $('host').value.trim();
+    const board = $('board').value.trim();
+    setStatus('Connecting...', false);
+    client = mqtt.connect('wss://' + host, {
+      username: $('user').value,
+      password: $('pass').value,
+      clientId: 'accel3d-' + Math.random().toString(16).slice(2, 8),
+      reconnectPeriod: 3000,
+      keepalive: 30
+    });
+    client.on('connect', () => {
+      S.connected = true;
+      setStatus('Connected to ' + host + ', listening to class/' + board + '/accel/#', true);
+      client.subscribe('class/' + board + '/accel/#');
+    });
+    client.on('reconnect', () => { S.connected = false; setStatus('Reconnecting...', false); });
+    client.on('close', () => { S.connected = false; setStatus('Disconnected', false); });
+    client.on('error', (err) => setStatus('Error: ' + err.message, false));
+    client.on('message', (topic, payload) => onData(topic, payload.toString()));
+  });
+
+  $('demo').addEventListener('click', () => {
+    if (client) { client.end(true); client = null; }
+    S.demo = true;
+    S.connected = false;
+    setStatus('Demo mode: simulated data', true);
+  });
+</script>
+</body>
+</html>

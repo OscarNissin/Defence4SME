@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Class MQTT dashboard (demo)</title>
+<style>
+  :root {
+    --bg: #f2f5f7;
+    --panel: #ffffff;
+    --ink: #14212b;
+    --muted: #64768a;
+    --line: #d7dfe5;
+    --accent: #0f766e;
+    --stale: #b45309;
+    --ok: #2f9e6a;
+    --caution: #e5922c;
+    --bad: #e5484d;
+    --water: #3b9eff;
+    --sun: #f5b400;
+    --ax: #e5484d;
+    --ay: #30a46c;
+    --az: #3e63dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1a22;
+      --panel: #16242f;
+      --ink: #e6edf2;
+      --muted: #8fa3b3;
+      --line: #284050;
+      --accent: #4fd1c5;
+      --stale: #f6ad55;
+      --ok: #4ade80;
+      --caution: #f6ad55;
+      --bad: #ff6b6b;
+      --water: #5cb0ff;
+      --sun: #ffd23f;
+      --ax: #ff6b6b;
+      --ay: #4ade80;
+      --az: #7c9cff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    line-height: 1.4;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px 32px;
+    align-items: end;
+    justify-content: space-between;
+    padding: 24px 28px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  h1 { margin: 0; font-size: 1.5rem; font-weight: 600; }
+  #status { color: var(--muted); font-size: .9rem; margin-top: 4px; }
+  #status.ok { color: var(--accent); }
+  .tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+  label { display: grid; gap: 2px; font-size: .8rem; color: var(--muted); }
+  label.check { display: flex; gap: 6px; align-items: center; padding-bottom: 8px; }
+  select {
+    font: inherit;
+    padding: 7px 9px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--ink);
+    min-width: 9rem;
+  }
+  select:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button {
+    font: inherit;
+    padding: 8px 16px;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--line);
+    cursor: pointer;
+  }
+  #saved { color: var(--muted); font-size: .8rem; }
+  main { padding: 24px 28px 48px; }
+  .empty { color: var(--muted); max-width: 38rem; }
+  .group { margin-bottom: 30px; }
+  .group h2 { margin: 0 0 10px; font-size: 1rem; font-weight: 600; color: var(--muted); }
+  .cards, .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+  }
+  .card, .tile {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 12px 14px;
+  }
+  .card.stale, .tile.stale { border-left-color: var(--stale); }
+  .ctitle, .topic { font-size: .8rem; color: var(--muted); overflow-wrap: anywhere; }
+  .age { font-size: .8rem; color: var(--muted); margin-top: 6px; }
+  .stale .age { color: var(--stale); }
+  .value { font-size: 2rem; font-weight: 600; margin: 4px 0 2px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .value.text { font-size: 1.2rem; }
+
+  svg.vis { display: block; width: 100%; height: auto; }
+  svg.vis text { font-family: inherit; fill: var(--ink); }
+  svg.vis .muted { fill: var(--muted); }
+  svg.vis .big { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  svg.vis .tick { font-size: 9px; fill: var(--muted); }
+  svg.vis .dial { fill: var(--bg); stroke: var(--line); stroke-width: 2; }
+  svg.vis .needle { fill: var(--ink); }
+  svg.vis .outline { fill: none; stroke: var(--muted); stroke-width: 3; }
+
+  canvas.vis { display: block; width: 100%; cursor: grab; touch-action: none; }
+  canvas.ir { cursor: pointer; }
+  .acc-read { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .85rem; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .acc-read b { color: var(--ink); font-weight: 600; }
+  .acc-state { font-weight: 600; font-size: 1rem; margin-top: 6px; }
+  .acc-state.shock { color: var(--bad); }
+  .irmsg { margin-top: 6px; font-size: 1.3rem; font-weight: 600; letter-spacing: .08em; min-height: 1.8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .irmsg span { color: var(--muted); }
+  .irmsg span.sent { color: var(--ink); }
+  .irline { font-size: .85rem; color: var(--muted); margin-top: 2px; }
+  .irline.err { color: var(--bad); }
+
+  svg.chart { display: block; width: 100%; height: auto; margin-top: 8px; }
+  svg.chart text { fill: var(--muted); font-size: 9px; font-family: inherit; }
+  svg.chart .gridline { stroke: var(--line); stroke-width: 1; }
+  svg.chart polyline { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; }
+  svg.chart circle { fill: var(--accent); }
+  .nodata { font-size: .8rem; color: var(--muted); margin-top: 8px; }
+  .bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: end;
+    justify-content: space-between;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--line);
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Class MQTT dashboard: demo</h1>
+    <div id="status" role="status">Connecting...</div>
+  </div>
+  <div id="saved">Simulated data. Nothing is saved.</div>
+</header>
+
+<div class="bar">
+  <div class="tools">
+    <label>Time range (other topics)
+      <select id="range">
+        <option value="900000">Last 15 minutes</option>
+        <option value="3600000" selected>Last hour</option>
+        <option value="21600000">Last 6 hours</option>
+        <option value="86400000">Last 24 hours</option>
+        <option value="0">Everything recorded</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" id="showRaw"> Also show raw tiles for sensor topics</label>
+    <button type="button" id="shake">Shake the board</button>
+    <button type="button" id="irbtn">Send IR message</button>
+    <button type="button" id="csv">Download CSV</button>
+    <button type="button" id="clear">Clear history</button>
+  </div>
+</div>
+
+<main>
+  <div id="boards"></div>
+  <div id="raw"></div>
+  <p class="empty" id="empty">Starting the simulated board...</p>
+</main>
+
+<script>
+  // ---------------------------------------------------------------------------
+  // Settings
+  // ---------------------------------------------------------------------------
+  const STALE_AFTER_S = 900;             // cards turn amber after 15 minutes without an update
+  const MAX_POINTS = 4000;               // per topic, for the history store
+  const STORE_KEY = 'class-mqtt-demo-history';   // separate from the real dashboard
+
+  const TEMP_MIN = -30, TEMP_MAX = 50;   // thermometer range, degrees C
+  const DIST_MAX = 200;                  // distance bar range, cm
+  const DIST_STOP = 20, DIST_CAUTION = 50; // red below 20 cm, orange below 50 cm
+  const IR_SLOT_MS = 100;                // must match the infrared emitter sketch
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  let uid = 0;
+
+  function ageText(ms) {
+    const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 60) return s + ' s ago';
+    if (s < 3600) return Math.floor(s / 60) + ' min ago';
+    return Math.floor(s / 3600) + ' h ago';
+  }
+
+  function parseTopic(topic) {
+    const p = topic.split('/');
+    if (p.length >= 3) return { board: p[1], leaf: p.slice(2).join('/') };
+    return { board: p[0], leaf: p.slice(1).join('/') || p[0] };
+  }
+
+  // Which visual belongs to which topic ending
+  function widgetFor(leaf) {
+    if (leaf === 'temp' || leaf === 'temperature') return 'temp';
+    if (leaf === 'humidity' || leaf === 'hum') return 'hum';
+    if (leaf === 'light' || leaf === 'light_percent') return 'light';
+    if (leaf === 'distance') return 'dist';
+    if (leaf.startsWith('accel/')) return 'accel';
+    if (leaf.startsWith('ir/')) return 'ir';
+    return null;
+  }
+  const WIDGET_ORDER = ['temp', 'hum', 'light', 'dist', 'accel', 'ir'];
+
+  function baseCard(title) {
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.innerHTML = '<div class="ctitle"></div><div class="cbody"></div><div class="age" data-time="0">waiting for data</div>';
+    el.querySelector('.ctitle').textContent = title;
+    return { el, body: el.querySelector('.cbody'), age: el.querySelector('.age') };
+  }
+
+  function stamp(c, time) {
+    c.age.dataset.time = time;
+    c.age.textContent = ageText(time);
+    c.el.classList.toggle('stale', (Date.now() - time) / 1000 > STALE_AFTER_S);
+  }
+
+  function smooth(cur, target, dt, tau) {
+    return cur + (target - cur) * (1 - Math.exp(-dt / tau));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Temperature: round gauge
+  // ---------------------------------------------------------------------------
+  function TempWidget() {
+    const c = baseCard('Temperature');
+    const CX = 110, CY = 105;
+    const ang = (v) => -135 + (clamp(v, TEMP_MIN, TEMP_MAX) - TEMP_MIN) / (TEMP_MAX - TEMP_MIN) * 270;
+    const pt = (r, deg) => [CX + r * Math.sin(deg * Math.PI / 180), CY - r * Math.cos(deg * Math.PI / 180)];
+    const arc = (r, a1, a2) => {
+      const p = pt(r, a1), q = pt(r, a2);
+      return 'M' + p[0].toFixed(1) + ' ' + p[1].toFixed(1) + ' A' + r + ' ' + r + ' 0 ' + (a2 - a1 > 180 ? 1 : 0) + ' 1 ' + q[0].toFixed(1) + ' ' + q[1].toFixed(1);
+    };
+    const bands = [[-30, 0, '#4aa3ff'], [0, 20, '#2fb7a3'], [20, 30, '#e5922c'], [30, 50, '#e5484d']];
+
+    let svg = '<svg class="vis" viewBox="0 0 220 240" role="img" aria-label="Temperature gauge">';
+    svg += '<circle class="dial" cx="' + CX + '" cy="' + CY + '" r="98"/>';
+    bands.forEach((b) => { svg += '<path d="' + arc(86, ang(b[0]), ang(b[1])) + '" stroke="' + b[2] + '" stroke-width="8" fill="none"/>'; });
+    for (let v = TEMP_MIN; v <= TEMP_MAX; v += 5) {
+      const major = v % 10 === 0, a = ang(v);
+      const p = pt(78, a), q = pt(major ? 68 : 72, a);
+      svg += '<line x1="' + p[0].toFixed(1) + '" y1="' + p[1].toFixed(1) + '" x2="' + q[0].toFixed(1) + '" y2="' + q[1].toFixed(1) + '" stroke="' + css('--muted') + '" stroke-width="' + (major ? 1.6 : 1) + '"/>';
+      if (major) { const t = pt(57, a); svg += '<text class="tick" x="' + t[0].toFixed(1) + '" y="' + (t[1] + 3).toFixed(1) + '" text-anchor="middle">' + v + '</text>'; }
+    }
+    svg += '<path class="needle" d="M110 30 L105 108 L115 108 Z"/><circle class="needle" cx="' + CX + '" cy="' + CY + '" r="7"/>';
+    svg += '<text class="big" x="' + CX + '" y="232" text-anchor="middle">--</text>';
+    svg += '</svg>';
+    c.body.innerHTML = svg;
+    const needle = c.body.querySelector('path.needle');
+    const label = c.body.querySelector('text.big');
+
+    let target = TEMP_MIN, current = TEMP_MIN, have = false;
+    return {
+      el: c.el,
+      update(leaf, text, time) {
+        const v = parseFloat(text);
+        if (!isFinite(v)) return;
+        target = v;
+        if (!have) { current = v; have = true; }
+        label.textContent = v.toFixed(1) + ' °C';
+        stamp(c, time);
+      },
+      frame(dt) {
+        current = smooth(current, target, dt, 0.4);
+        needle.setAttribute('transform', 'rotate(' + ang(current).toFixed(2) + ' ' + CX + ' ' + CY + ')');
+      }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Humidity: droplet that fills up
+  // ---------------------------------------------------------------------------
+  function HumWidget() {
+    const c = baseCard('Humidity');
+    const id = 'drop' + (uid++);
+    const path = 'M50 4 C50 4 8 58 8 92 A42 42 0 0 0 92 92 C92 58 50 4 50 4 Z';
+    c.body.innerHTML =
+      '<svg class="vis" viewBox="0 0 260 150" role="img" aria-label="Humidity droplet">' +
+      '<defs><clipPath id="' + id + '"><path d="' + path + '"/></clipPath></defs>' +
+      '<g transform="translate(10 4)">' +
+      '<path d="' + path + '" fill="' + css('--panel') + '"/>' +
+      '<rect class="water" x="0" y="134" width="100" height="0" fill="var(--water)" clip-path="url(#' + id + ')"/>' +
+      '<path class="outline" d="' + path + '"/></g>' +
+      '<text class="big" x="125" y="72" font-size="34">--</text>' +
+      '<text class="muted" font-size="11" x="125" y="92">relative humidity</text>' +
+      '<text class="comfort" font-size="13" font-weight="600" x="125" y="114"></text>' +
+      '</svg>';
+    const water = c.body.querySelector('.water');
+    const num = c.body.querySelector('text.big');
+    const comfort = c.body.querySelector('.comfort');
+
+    let target = 0, current = 0, have = false;
+    return {
+      el: c.el,
+      update(leaf, text, time) {
+        const v = parseFloat(text);
+        if (!isFinite(v)) return;
+        target = clamp(v, 0, 100);
+        if (!have) { current = target; have = true; }
+        num.textContent = Math.round(v) + ' %';
+        if (v < 30) { comfort.textContent = 'dry'; comfort.style.fill = 'var(--caution)'; }
+        else if (v <= 60) { comfort.textContent = 'comfortable'; comfort.style.fill = 'var(--ok)'; }
+        else { comfort.textContent = 'humid'; comfort.style.fill = 'var(--water)'; }
+        stamp(c, time);
+      },
+      frame(dt) {
+        current = smooth(current, target, dt, 0.5);
+        const h = current / 100 * 130;
+        water.setAttribute('y', (134 - h).toFixed(1));
+        water.setAttribute('height', (h + 2).toFixed(1));
+      }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Light: sun that gets brighter
+  // ---------------------------------------------------------------------------
+  function LightWidget() {
+    const c = baseCard('Light');
+    let rays = '';
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4;
+      rays += '<line class="ray" x1="' + (60 + 30 * Math.cos(a)).toFixed(1) + '" y1="' + (60 + 30 * Math.sin(a)).toFixed(1) +
+              '" x2="' + (60 + 44 * Math.cos(a)).toFixed(1) + '" y2="' + (60 + 44 * Math.sin(a)).toFixed(1) +
+              '" stroke="var(--sun)" stroke-width="4" stroke-linecap="round"/>';
+    }
+    c.body.innerHTML =
+      '<svg class="vis" viewBox="0 0 260 120" role="img" aria-label="Light level">' +
+      rays +
+      '<circle class="sun" cx="60" cy="60" r="21" fill="var(--sun)"/>' +
+      '<circle cx="60" cy="60" r="21" fill="none" stroke="var(--muted)" stroke-width="2"/>' +
+      '<text class="big" x="125" y="62" font-size="34">--</text>' +
+      '<text class="muted raw" font-size="11" x="125" y="82"></text>' +
+      '<rect x="125" y="94" width="125" height="8" rx="4" fill="var(--line)"/>' +
+      '<rect class="level" x="125" y="94" width="0" height="8" rx="4" fill="var(--sun)"/>' +
+      '</svg>';
+    const sun = c.body.querySelector('.sun');
+    const rayEls = c.body.querySelectorAll('.ray');
+    const num = c.body.querySelector('text.big');
+    const raw = c.body.querySelector('.raw');
+    const level = c.body.querySelector('.level');
+
+    let target = 0, current = 0, have = false, rawValue = null;
+    return {
+      el: c.el,
+      update(leaf, text, time) {
+        const v = parseFloat(text);
+        if (!isFinite(v)) return;
+        let pct;
+        if (leaf === 'light') { rawValue = v; pct = v / 1023 * 100; }
+        else pct = v;
+        target = clamp(pct, 0, 100);
+        if (!have) { current = target; have = true; }
+        num.textContent = Math.round(pct) + ' %';
+        raw.textContent = rawValue !== null ? 'raw ' + Math.round(rawValue) + ' of 1023' : 'brightness';
+        stamp(c, time);
+      },
+      frame(dt) {
+        current = smooth(current, target, dt, 0.4);
+        const f = current / 100;
+        sun.setAttribute('opacity', (0.12 + 0.88 * f).toFixed(2));
+        rayEls.forEach((r) => r.setAttribute('opacity', (0.08 + 0.92 * f).toFixed(2)));
+        level.setAttribute('width', (125 * f).toFixed(1));
+      }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Distance: green / orange / red bar with a moving marker
+  // ---------------------------------------------------------------------------
+  function DistWidget() {
+    const c = baseCard('Distance');
+    const id = 'dist' + (uid++);
+    const X0 = 10, W = 280, Y = 54, H = 18;
+    const xOf = (d) => X0 + clamp(d, 0, DIST_MAX) / DIST_MAX * W;
+    const zone = (a, b, col) => '<rect x="' + xOf(a).toFixed(1) + '" y="' + Y + '" width="' + (xOf(b) - xOf(a)).toFixed(1) + '" height="' + H + '" fill="' + col + '"/>';
+    const zones = zone(0, DIST_STOP, 'var(--bad)') + zone(DIST_STOP, DIST_CAUTION, 'var(--caution)') + zone(DIST_CAUTION, DIST_MAX, 'var(--ok)');
+
+    let ticks = '';
+    for (let d = 0; d <= DIST_MAX; d += 50) {
+      ticks += '<text class="tick" x="' + xOf(d).toFixed(1) + '" y="96" text-anchor="middle">' + d + '</text>';
+    }
+    c.body.innerHTML =
+      '<svg class="vis" viewBox="0 0 300 108" role="img" aria-label="Distance bar">' +
+      '<defs><clipPath id="' + id + 'a"><rect x="' + X0 + '" y="' + Y + '" width="' + W + '" height="' + H + '" rx="9"/></clipPath>' +
+      '<clipPath id="' + id + 'b"><rect class="fillclip" x="' + X0 + '" y="' + Y + '" width="0" height="' + H + '"/></clipPath></defs>' +
+      '<g clip-path="url(#' + id + 'a)">' +
+        '<g opacity="0.22">' + zones + '</g>' +
+        '<g clip-path="url(#' + id + 'b)">' + zones + '</g>' +
+      '</g>' +
+      '<rect x="' + X0 + '" y="' + Y + '" width="' + W + '" height="' + H + '" rx="9" fill="none" stroke="var(--line)" stroke-width="1.5"/>' +
+      '<polygon class="marker" points="0,0 0,0 0,0" fill="var(--ink)"/>' +
+      ticks +
+      '<text class="big" x="10" y="26" font-size="24">--</text>' +
+      '<text class="zonetext" x="290" y="26" font-size="14" font-weight="600" text-anchor="end"></text>' +
+      '</svg>';
+    const fillclip = c.body.querySelector('.fillclip');
+    const marker = c.body.querySelector('.marker');
+    const num = c.body.querySelector('text.big');
+    const zonetext = c.body.querySelector('.zonetext');
+
+    let target = 0, current = 0, have = false;
+    return {
+      el: c.el,
+      update(leaf, text, time) {
+        const v = parseFloat(text);
+        if (!isFinite(v)) return;
+        target = v;
+        if (!have) { current = clamp(v, 0, DIST_MAX); have = true; }
+        num.textContent = (v > DIST_MAX ? '>' + DIST_MAX : v.toFixed(1)) + ' cm';
+        if (v < DIST_STOP) { zonetext.textContent = 'STOP'; zonetext.style.fill = 'var(--bad)'; }
+        else if (v < DIST_CAUTION) { zonetext.textContent = 'CAUTION'; zonetext.style.fill = 'var(--caution)'; }
+        else { zonetext.textContent = 'CLEAR'; zonetext.style.fill = 'var(--ok)'; }
+        stamp(c, time);
+      },
+      frame(dt) {
+        current = smooth(current, clamp(target, 0, DIST_MAX), dt, 0.25);
+        const x = xOf(current);
+        fillclip.setAttribute('width', (x - X0).toFixed(1));
+        marker.setAttribute('points', (x - 7).toFixed(1) + ',' + (Y - 14) + ' ' + (x + 7).toFixed(1) + ',' + (Y - 14) + ' ' + x.toFixed(1) + ',' + (Y - 2));
+      }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Accelerometer: tilting board in 3D
+  // ---------------------------------------------------------------------------
+  const mulMV = (m, v) => [
+    m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+    m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+    m[6] * v[0] + m[7] * v[1] + m[8] * v[2]
+  ];
+  const mulMM = (a, b) => {
+    const r = new Array(9);
+    for (let i = 0; i < 3; i++)
+      for (let j = 0; j < 3; j++)
+        r[i * 3 + j] = a[i * 3] * b[j] + a[i * 3 + 1] * b[3 + j] + a[i * 3 + 2] * b[6 + j];
+    return r;
+  };
+  const rotX = (a) => [1, 0, 0, 0, Math.cos(a), -Math.sin(a), 0, Math.sin(a), Math.cos(a)];
+  const rotY = (a) => [Math.cos(a), 0, Math.sin(a), 0, 1, 0, -Math.sin(a), 0, Math.cos(a)];
+  const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const len3 = (a) => Math.hypot(a[0], a[1], a[2]);
+  const norm3 = (a) => { const l = len3(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+  // rotation that turns the unit vector u (the sensor's "up") onto world up (0,1,0)
+  function rotUpFrom(u) {
+    const c = u[1];
+    if (c > 0.99999) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    if (c < -0.99999) return [1, 0, 0, 0, -1, 0, 0, 0, -1];
+    const kx = -u[2], ky = 0, kz = u[0];
+    const K = [0, -kz, ky, kz, 0, -kx, -ky, kx, 0];
+    const K2 = mulMM(K, K);
+    const f = 1 / (1 + c);
+    return [1, 0, 0, 0, 1, 0, 0, 0, 1].map((v, i) => v + K[i] + K2[i] * f);
+  }
+
+  const BOARD = { x: 1.45, y: 1.0, z: 0.12 };
+  const CORNERS = [];
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1])
+    CORNERS.push([sx * BOARD.x, sy * BOARD.y, sz * BOARD.z]);
+  const vi = (sx, sy, sz) => ((sx > 0) << 2) | ((sy > 0) << 1) | (sz > 0);
+  const FACES = [
+    { n: [0, 0, 1],  v: [vi(-1,-1,1), vi(1,-1,1), vi(1,1,1), vi(-1,1,1)], top: true },
+    { n: [0, 0, -1], v: [vi(-1,-1,-1), vi(-1,1,-1), vi(1,1,-1), vi(1,-1,-1)] },
+    { n: [1, 0, 0],  v: [vi(1,-1,-1), vi(1,1,-1), vi(1,1,1), vi(1,-1,1)] },
+    { n: [-1, 0, 0], v: [vi(-1,-1,-1), vi(-1,-1,1), vi(-1,1,1), vi(-1,1,-1)] },
+    { n: [0, 1, 0],  v: [vi(-1,1,-1), vi(-1,1,1), vi(1,1,1), vi(1,1,-1)] },
+    { n: [0, -1, 0], v: [vi(-1,-1,-1), vi(1,-1,-1), vi(1,-1,1), vi(-1,-1,1)] }
+  ];
+  const LIGHT_DIR = norm3([0.3, 0.8, 0.5]);
+
+  function shade(color, b) {
+    const m = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    const rgb = m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [15, 118, 110];
+    return 'rgb(' + rgb.map((v) => Math.round(v * b)).join(',') + ')';
+  }
+
+  function arrow3(ctx, a, b, color, width, dashed) {
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = width;
+    ctx.setLineDash(dashed ? [6, 5] : []);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    ctx.setLineDash([]);
+    const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    const hs = 5 + width * 1.5;
+    ctx.beginPath();
+    ctx.moveTo(b[0], b[1]);
+    ctx.lineTo(b[0] - hs * Math.cos(ang - 0.45), b[1] - hs * Math.sin(ang - 0.45));
+    ctx.lineTo(b[0] - hs * Math.cos(ang + 0.45), b[1] - hs * Math.sin(ang + 0.45));
+    ctx.closePath(); ctx.fill();
+  }
+
+  function AccelWidget() {
+    const c = baseCard('Accelerometer');
+    c.body.innerHTML =
+      '<canvas class="vis" style="height:240px" aria-label="3D view of the accelerometer"></canvas>' +
+      '<div class="acc-state">Waiting for data</div>' +
+      '<div class="acc-read"><span>x <b class="ax">0.00</b></span><span>y <b class="ay">0.00</b></span><span>z <b class="az">0.00</b></span>' +
+      '<span>total <b class="at">0.00</b> g</span><span>roll <b class="ar">0</b>&deg;</span><span>pitch <b class="ap">0</b>&deg;</span></div>';
+    const canvas = c.body.querySelector('canvas');
+    const stateEl = c.body.querySelector('.acc-state');
+    const out = {
+      x: c.body.querySelector('.ax'), y: c.body.querySelector('.ay'), z: c.body.querySelector('.az'),
+      t: c.body.querySelector('.at'), r: c.body.querySelector('.ar'), p: c.body.querySelector('.ap')
+    };
+
+    const S = { a: [0, 0, 1], ad: [0, 0, 1], g: [0, 0, 1], lastXyz: 0, lastMsg: 0, yaw: -0.55, pitch: 0.45 };
+
+    let dragging = false, lx = 0, ly = 0;
+    canvas.addEventListener('pointerdown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
+    canvas.addEventListener('pointerup', () => { dragging = false; });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      S.yaw += (e.clientX - lx) * 0.01;
+      S.pitch = clamp(S.pitch + (e.clientY - ly) * 0.01, -1.4, 1.4);
+      lx = e.clientX; ly = e.clientY;
+    });
+
+    function draw() {
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      if (!w) return;
+      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+        canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+
+      const CAM = 7, F = h * 1.55, cx = w / 2, cy = h * 0.52;
+      const V = mulMM(rotX(S.pitch), rotY(S.yaw));
+      const gUnit = len3(S.g) < 0.05 ? [0, 1, 0] : norm3(S.g);
+      const R = rotUpFrom(gUnit);
+      const proj = (p) => { const d = CAM - p[2]; return [cx + F * p[0] / d, cy - F * p[1] / d]; };
+      const world = (p) => mulMV(V, p);
+      const model = (p) => mulMV(V, mulMV(R, p));
+
+      ctx.strokeStyle = css('--line'); ctx.lineWidth = 1;
+      const GY = -1.9;
+      for (let i = -3; i <= 3; i++) {
+        for (const pair of [[[i, GY, -3], [i, GY, 3]], [[-3, GY, i], [3, GY, i]]]) {
+          const p = proj(world(pair[0])), q = proj(world(pair[1]));
+          ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+        }
+      }
+      arrow3(ctx, proj(world([0, 0, 0])), proj(world([0, -1.7, 0])), css('--muted'), 2, true);
+
+      const vc = CORNERS.map(model);
+      const accent = css('--accent');
+      for (const f of FACES) {
+        const n = mulMV(V, mulMV(R, f.n));
+        const ctr = f.v.reduce((s, i) => [s[0] + vc[i][0] / 4, s[1] + vc[i][1] / 4, s[2] + vc[i][2] / 4], [0, 0, 0]);
+        if (dot3(n, [-ctr[0], -ctr[1], CAM - ctr[2]]) <= 0) continue;
+        const b = 0.35 + 0.65 * Math.max(0, dot3(n, LIGHT_DIR));
+        ctx.fillStyle = f.top ? shade(accent, b) : 'hsl(205 12% ' + (22 + 38 * b) + '%)';
+        ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1;
+        ctx.beginPath();
+        f.v.forEach((i, k) => { const p = proj(vc[i]); if (k === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); });
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      }
+
+      ctx.font = '600 12px "Avenir Next", "Segoe UI", system-ui, sans-serif';
+      for (const ax of [['X', [2.1, 0, 0], '--ax'], ['Y', [0, 1.6, 0], '--ay'], ['Z', [0, 0, 1.5], '--az']]) {
+        arrow3(ctx, proj(model([0, 0, 0])), proj(model(ax[1])), css(ax[2]), 2.5, false);
+        const t = proj(model(ax[1].map((v) => v * 1.12)));
+        ctx.fillStyle = css(ax[2]); ctx.fillText(ax[0], t[0] - 4, t[1] + 4);
+      }
+
+      const lin = [S.ad[0] - S.g[0], S.ad[1] - S.g[1], S.ad[2] - S.g[2]];
+      if (len3(lin) > 0.08) {
+        const wv = mulMV(R, lin).map((v) => v * 2.4);
+        arrow3(ctx, proj(world([0, 0, 0])), proj(world(wv)), css('--stale'), 4.5, false);
+      }
+    }
+
+    return {
+      el: c.el,
+      update(leaf, text, time, restore) {
+        const now = performance.now();
+        if (leaf === 'accel/xyz') {
+          const p = text.split(',').map(parseFloat);
+          if (p.length === 3 && p.every(isFinite)) {
+            S.a = p; S.lastXyz = now; S.lastMsg = now;
+            if (restore) { S.ad = p.slice(); S.g = p.slice(); }
+            stamp(c, time);
+          }
+        } else if (now - S.lastXyz > 1500) {
+          const v = parseFloat(text);
+          if (!isFinite(v)) return;
+          if (leaf === 'accel/x') S.a[0] = v;
+          else if (leaf === 'accel/y') S.a[1] = v;
+          else if (leaf === 'accel/z') S.a[2] = v;
+          else return;
+          S.lastMsg = now;
+          stamp(c, time);
+        }
+      },
+      frame(dt) {
+        for (let i = 0; i < 3; i++) {
+          S.ad[i] = smooth(S.ad[i], S.a[i], dt, 0.12);
+          S.g[i] = smooth(S.g[i], S.ad[i], dt, 0.8);
+        }
+        draw();
+        const total = len3(S.ad);
+        out.x.textContent = S.ad[0].toFixed(2);
+        out.y.textContent = S.ad[1].toFixed(2);
+        out.z.textContent = S.ad[2].toFixed(2);
+        out.t.textContent = total.toFixed(2);
+        out.r.textContent = Math.round(Math.atan2(S.g[1], S.g[2]) * 180 / Math.PI);
+        out.p.textContent = Math.round(Math.atan2(-S.g[0], Math.hypot(S.g[1], S.g[2])) * 180 / Math.PI);
+        const lin = len3([S.ad[0] - S.g[0], S.ad[1] - S.g[1], S.ad[2] - S.g[2]]);
+        stateEl.classList.remove('shock');
+        let txt;
+        if (!S.lastMsg) txt = 'Waiting for data';
+        else if (total < 0.3) { txt = 'Free fall?'; stateEl.classList.add('shock'); }
+        else if (total > 2.5) { txt = 'SHOCK'; stateEl.classList.add('shock'); }
+        else if (lin > 0.15) txt = 'Moving';
+        else txt = 'At rest';
+        if (stateEl.textContent !== txt) stateEl.textContent = txt;
+      }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Infrared: replay of the transmitted pulse train
+  // ---------------------------------------------------------------------------
+  function IRWidget() {
+    const c = baseCard('Infrared link');
+    c.body.innerHTML =
+      '<canvas class="vis ir" style="height:96px" aria-label="Infrared pulse train"></canvas>' +
+      '<div class="irmsg"><span>No message yet</span></div>' +
+      '<div class="irline stats"></div>' +
+      '<div class="irline rx"></div>' +
+      '<div class="irline err"></div>';
+    const canvas = c.body.querySelector('canvas');
+    const msgEl = c.body.querySelector('.irmsg');
+    const statsEl = c.body.querySelector('.stats');
+    const rxEl = c.body.querySelector('.rx');
+    const errEl = c.body.querySelector('.err');
+
+    let slots = [], message = '', t0 = null, shownChars = -1;
+
+    function buildSlots(msg) {
+      const s = [1, 1, 1, 0];                         // start marker
+      const bytes = msg + '\n';
+      for (let i = 0; i < bytes.length; i++) {
+        const code = bytes.charCodeAt(i) & 255;
+        for (let b = 7; b >= 0; b--) s.push((code >> b) & 1);
+      }
+      return s;
+    }
+
+    function setMessage(msg) {
+      message = msg;
+      slots = buildSlots(msg);
+      msgEl.innerHTML = '';
+      for (const ch of msg) {
+        const sp = document.createElement('span');
+        sp.textContent = ch;
+        msgEl.appendChild(sp);
+      }
+      if (!msg.length) msgEl.innerHTML = '<span>(empty)</span>';
+      shownChars = -1;
+      statsEl.textContent = msg.length + ' characters, ' + slots.length + ' slots, ' + (slots.length * IR_SLOT_MS / 1000).toFixed(1) + ' s';
+    }
+
+    function replay() { if (slots.length) { t0 = performance.now(); shownChars = -1; } }
+    canvas.addEventListener('click', replay);
+
+    function draw(pos) {
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      if (!w) return;
+      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+        canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+
+      const PX = 12, HEAD = 70, HI = 38, LO = h - 14;
+      const p = pos === null ? 0 : pos;
+      const idx = pos === null ? -1 : Math.floor(pos);
+      const on = idx >= 0 && idx < slots.length && slots[idx] === 1;
+
+      // LED
+      ctx.beginPath();
+      ctx.arc(24, 16, on ? 9 : 7, 0, Math.PI * 2);
+      ctx.fillStyle = on ? css('--stale') : css('--line');
+      ctx.shadowColor = css('--stale'); ctx.shadowBlur = on ? 18 : 0;
+      ctx.fill(); ctx.shadowBlur = 0;
+      ctx.fillStyle = css('--muted');
+      ctx.font = '11px "Avenir Next", "Segoe UI", system-ui, sans-serif';
+      ctx.fillText(pos === null ? (slots.length ? 'idle (click to replay the last message)' : 'idle') : (idx < slots.length ? 'transmitting' : 'done'), 40, 20);
+
+      // pulse train
+      ctx.strokeStyle = css('--line'); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, LO); ctx.lineTo(w, LO); ctx.stroke();
+      const first = Math.floor(p - HEAD / PX) - 1, last = Math.ceil(p + (w - HEAD) / PX) + 1;
+      ctx.strokeStyle = css('--accent'); ctx.lineWidth = 2; ctx.lineJoin = 'miter';
+      ctx.beginPath();
+      let prev = null;
+      for (let i = first; i <= last; i++) {
+        const v = (pos !== null && i >= 0 && i < slots.length) ? slots[i] : 0;
+        const x0 = HEAD + (i - p) * PX, x1 = x0 + PX, y = v ? HI : LO;
+        if (prev === null) ctx.moveTo(x0, y); else if (prev !== y) ctx.lineTo(x0, y);
+        ctx.lineTo(x1, y);
+        prev = y;
+      }
+      ctx.stroke();
+      if (pos !== null) {
+        ctx.strokeStyle = css('--muted'); ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(HEAD, 30); ctx.lineTo(HEAD, h); ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
+
+    return {
+      el: c.el,
+      update(leaf, text, time, restore) {
+        if (leaf === 'ir/sent') {
+          setMessage(text);
+          if (restore) t0 = null; else replay();
+          stamp(c, time);
+        } else if (leaf === 'ir/rx') {
+          rxEl.textContent = 'Received: ' + text;
+          errEl.textContent = '';
+          stamp(c, time);
+        } else if (leaf === 'ir/error') {
+          errEl.textContent = 'Error: ' + text;
+          stamp(c, time);
+        }
+      },
+      frame() {
+        let pos = null;
+        if (t0 !== null) {
+          pos = (performance.now() - t0) / IR_SLOT_MS;
+          if (pos > slots.length + 6) { t0 = null; pos = null; shownChars = -1; }
+        }
+        draw(pos);
+        const sent = pos === null ? (message.length ? message.length : -1) : clamp(Math.floor((pos - 4) / 8), 0, message.length);
+        if (sent !== shownChars) {
+          shownChars = sent;
+          const spans = msgEl.children;
+          for (let i = 0; i < spans.length; i++) spans[i].className = i < sent ? 'sent' : '';
+        }
+      }
+    };
+  }
+
+  const FACTORY = { temp: TempWidget, hum: HumWidget, light: LightWidget, dist: DistWidget, accel: AccelWidget, ir: IRWidget };
+
+  // ---------------------------------------------------------------------------
+  // Boards and widgets
+  // ---------------------------------------------------------------------------
+  const boards = {};            // name -> { section, cards, widgets }
+  const boardsEl = $('boards');
+
+  function getBoard(name) {
+    if (boards[name]) return boards[name];
+    const section = document.createElement('section');
+    section.className = 'group';
+    section.dataset.name = name;
+    const h = document.createElement('h2');
+    h.textContent = name;
+    const cards = document.createElement('div');
+    cards.className = 'cards';
+    section.appendChild(h); section.appendChild(cards);
+    const after = Array.from(boardsEl.children).find((s) => s.dataset.name > name);
+    boardsEl.insertBefore(section, after || null);
+    boards[name] = { section, cards, widgets: {} };
+    return boards[name];
+  }
+
+  function route(topic, text, time, restore) {
+    const t = parseTopic(topic);
+    const type = widgetFor(t.leaf);
+    if (!type) return false;
+    const b = getBoard(t.board);
+    let w = b.widgets[type];
+    if (!w) {
+      w = FACTORY[type]();
+      w.el.style.order = WIDGET_ORDER.indexOf(type);
+      b.cards.appendChild(w.el);
+      b.widgets[type] = w;
+      $('empty').style.display = 'none';
+    }
+    w.update(t.leaf, text, time, restore);
+    return true;
+  }
+
+  // one animation loop for all widgets
+  let lastFrame = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.1, (now - lastFrame) / 1000);
+    lastFrame = now;
+    for (const name in boards) {
+      const ws = boards[name].widgets;
+      for (const type in ws) if (ws[type].frame) ws[type].frame(dt);
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // ---------------------------------------------------------------------------
+  // History store and plain tiles for everything else
+  // ---------------------------------------------------------------------------
+  const topics = {};            // topic -> { value, time, series: [[ms, number], ...] }
+  const rangeEl = $('range'), rawEl = $('raw'), savedEl = $('saved');
+  let dirty = false, rawTimer = null;
+
+  function thin(series) {
+    if (series.length <= MAX_POINTS) return series;
+    const half = Math.floor(series.length / 2);
+    return series.slice(0, half).filter((_, i) => i % 2 === 0).concat(series.slice(half));
+  }
+
+  function loadHistory() {
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      for (const name of Object.keys(saved)) {
+        const s = saved[name];
+        topics[name] = { value: s.value, time: s.time, series: s.series || [] };
+        route(name, String(s.value), s.time, true);       // show the last known values right away
+      }
+      savedEl.textContent = 'Loaded earlier history from this browser.';
+      renderRaw();
+    } catch (e) { /* ignore */ }
+  }
+
+  function saveHistory() {
+    if (!dirty) return;
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(topics));
+      dirty = false;
+      savedEl.textContent = 'History saved in this browser at ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      savedEl.textContent = 'Could not save history (browser storage blocked or full).';
+    }
+  }
+
+  function chart(series) {
+    const range = Number(rangeEl.value);
+    const now = Date.now();
+    const start = range ? now - range : (series.length ? series[0][0] : now);
+    const pts = series.filter((p) => p[0] >= start);
+    if (!pts.length) return '<div class="nodata">No values in this time range.</div>';
+    const W = 300, H = 120, L = 34, R = 8, T = 8, B = 18;
+    let min = Math.min(...pts.map((p) => p[1])), max = Math.max(...pts.map((p) => p[1]));
+    if (min === max) { min -= 1; max += 1; }
+    const t0 = start, t1 = range ? now : Math.max(pts[pts.length - 1][0], t0 + 1);
+    const x = (ms) => L + ((ms - t0) / (t1 - t0)) * (W - L - R);
+    const y = (v) => T + (1 - (v - min) / (max - min)) * (H - T - B);
+    const fmt = (n) => Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(1);
+    const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    let svg = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Values over time">';
+    svg += '<line class="gridline" x1="' + L + '" x2="' + (W - R) + '" y1="' + y(max) + '" y2="' + y(max) + '"/>';
+    svg += '<line class="gridline" x1="' + L + '" x2="' + (W - R) + '" y1="' + y(min) + '" y2="' + y(min) + '"/>';
+    svg += '<text x="' + (L - 4) + '" y="' + (y(max) + 3) + '" text-anchor="end">' + fmt(max) + '</text>';
+    svg += '<text x="' + (L - 4) + '" y="' + (y(min) + 3) + '" text-anchor="end">' + fmt(min) + '</text>';
+    svg += '<text x="' + L + '" y="' + (H - 4) + '">' + hhmm(t0) + '</text>';
+    svg += '<text x="' + (W - R) + '" y="' + (H - 4) + '" text-anchor="end">' + hhmm(t1) + '</text>';
+    if (pts.length === 1) svg += '<circle cx="' + x(pts[0][0]).toFixed(1) + '" cy="' + y(pts[0][1]).toFixed(1) + '" r="2.5"/>';
+    else svg += '<polyline points="' + pts.map((p) => x(p[0]).toFixed(1) + ',' + y(p[1]).toFixed(1)).join(' ') + '"/>';
+    return svg + '</svg>';
+  }
+
+  function renderRaw() {
+    rawTimer = null;
+    const showAll = $('showRaw').checked;
+    const names = Object.keys(topics).sort().filter((n) => showAll || !widgetFor(parseTopic(n).leaf));
+    if (!names.length) { rawEl.innerHTML = ''; return; }
+    const groups = {};
+    for (const name of names) {
+      const key = parseTopic(name).board;
+      (groups[key] = groups[key] || []).push(name);
+    }
+    let html = '';
+    for (const key of Object.keys(groups).sort()) {
+      html += '<section class="group"><h2>' + esc(key) + (showAll ? ' (raw topics)' : ' (other topics)') + '</h2><div class="grid">';
+      for (const name of groups[key]) {
+        const t = topics[name];
+        const numeric = t.series.length > 0 && isFinite(t.value) && !isNaN(parseFloat(t.value));
+        const stale = (Date.now() - t.time) / 1000 > STALE_AFTER_S;
+        html += '<div class="tile' + (stale ? ' stale' : '') + '">' +
+          '<div class="topic">' + esc(name) + '</div>' +
+          '<div class="value' + (numeric ? '' : ' text') + '">' + esc(t.value) + '</div>' +
+          '<div class="age" data-time="' + t.time + '">' + ageText(t.time) + '</div>' +
+          (numeric ? chart(t.series) : '') + '</div>';
+      }
+      html += '</div></section>';
+    }
+    rawEl.innerHTML = html;
+    if (html) $('empty').style.display = 'none';
+  }
+  function scheduleRaw() { if (!rawTimer) rawTimer = setTimeout(renderRaw, 400); }
+
+  rangeEl.addEventListener('change', renderRaw);
+  $('showRaw').addEventListener('change', renderRaw);
+
+  $('csv').addEventListener('click', () => {
+    const rows = ['topic,time,value'];
+    for (const name of Object.keys(topics).sort())
+      for (const p of topics[name].series) rows.push([name, new Date(p[0]).toISOString(), p[1]].join(','));
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'mqtt-history.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  $('clear').addEventListener('click', () => {
+    if (!confirm('Delete all recorded history?')) return;
+    for (const name of Object.keys(topics)) delete topics[name];
+    try { localStorage.removeItem(STORE_KEY); } catch (e) { /* ignore */ }
+    dirty = false;
+    renderRaw();
+    savedEl.textContent = 'History cleared.';
+  });
+
+  // keep the "x s ago" labels fresh
+  setInterval(() => {
+    document.querySelectorAll('.age').forEach((el) => {
+      const ms = Number(el.dataset.time);
+      if (!ms) return;
+      el.textContent = ageText(ms);
+      const holder = el.closest('.card, .tile');
+      if (holder) holder.classList.toggle('stale', (Date.now() - ms) / 1000 > STALE_AFTER_S);
+    });
+  }, 1000);
+
+  // ---------------------------------------------------------------------------
+  // Connection
+  // ---------------------------------------------------------------------------
+  function setStatus(text, ok) { $('status').textContent = text; $('status').className = ok ? 'ok' : ''; }
+
+  function onMessage(topic, payload) {
+    const text = payload.toString();
+    const now = Date.now();
+    const t = topics[topic] || (topics[topic] = { series: [] });
+    t.value = text;
+    t.time = now;
+    const n = parseFloat(text);
+    if (!isNaN(n) && isFinite(text)) {
+      t.series.push([now, n]);
+      t.series = thin(t.series);
+    }
+    route(topic, text, now, false);
+    scheduleRaw();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Simulated board: one of each sensor, random but smooth data
+  // ---------------------------------------------------------------------------
+  let shakeUntil = 0;
+  let sendIR = () => {};
+
+  function startDemo() {
+    setStatus('Demo mode: one simulated board, nothing is sent over the network', true);
+    const send = (leaf, v) => onMessage('class/demo/' + leaf, String(v));
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    // random walk that is pulled gently towards a centre value
+    const walk = (v, centre, pull, step, lo, hi) => clamp(v + (centre - v) * pull + rnd(-step, step), lo, hi);
+
+    let temp = 21, hum = 55, light = 600, dist = 90, distTarget = 90, t = 0;
+
+    const tickTemp = () => { temp = walk(temp, 21, 0.03, 0.3, -5, 40); send('temp', temp.toFixed(1)); };
+    const tickHum = () => { hum = walk(hum, 55, 0.03, 1.5, 8, 95); send('humidity', Math.round(hum)); };
+    const tickLight = () => {
+      light = walk(light, 550, 0.02, 50, 0, 1023);
+      const raw = Math.round(light);
+      send('light', raw);
+      send('light_percent', Math.round(raw / 10.23));
+    };
+    const tickDist = () => {
+      if (Math.random() < 0.08) distTarget = rnd(8, 180);       // something moves in front of the sensor
+      dist = walk(dist, distTarget, 0.12, 1.5, 4, 220);
+      send('distance', dist.toFixed(1));
+    };
+    const tickAccel = () => {
+      t += 0.2;
+      const tx = 0.7 * Math.sin(t * 0.45) + 0.2 * Math.sin(t * 1.3);
+      const ty = 0.5 * Math.cos(t * 0.37);
+      let x = tx + rnd(-0.02, 0.02), y = ty + rnd(-0.02, 0.02);
+      let z = Math.sqrt(Math.max(0.05, 1 - 0.5 * tx * tx - 0.5 * ty * ty)) + rnd(-0.02, 0.02);
+      if (Date.now() > shakeUntil && Math.random() < 0.02) shakeUntil = Date.now() + 1500;
+      if (Date.now() < shakeUntil) { x += rnd(-1.8, 1.8); y += rnd(-1.8, 1.8); z += rnd(-1.2, 1.2); }
+      send('accel/xyz', x.toFixed(2) + ',' + y.toFixed(2) + ',' + z.toFixed(2));
+    };
+
+    const words = ['HELLO', 'UXV', 'DEFENCE', 'SME', 'GO', 'STOP', 'DRONE', 'UGV'];
+    sendIR = (word) => {
+      word = word || words[Math.floor(Math.random() * words.length)];
+      send('ir/sent', word);
+      const slots = (word.length + 1) * 8 + 4;
+      setTimeout(() => send('ir/rx', word), slots * IR_SLOT_MS + 600);   // the other board decodes it
+    };
+
+    [tickTemp, tickHum, tickLight, tickDist, tickAccel].forEach((f) => f());
+    setInterval(tickTemp, 2000);
+    setInterval(tickHum, 2000);
+    setInterval(tickLight, 1000);
+    setInterval(tickDist, 500);
+    setInterval(tickAccel, 200);
+    setTimeout(() => sendIR('HELLO'), 1500);
+    setInterval(() => sendIR(), 15000);
+
+    $('shake').addEventListener('click', () => { shakeUntil = Date.now() + 2000; });
+    $('irbtn').addEventListener('click', () => sendIR());
+  }
+
+  startDemo();
+</script>
+</body>
+</html>
