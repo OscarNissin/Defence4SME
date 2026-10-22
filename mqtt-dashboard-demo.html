@@ -168,6 +168,7 @@
     <label class="check"><input type="checkbox" id="showRaw"> Also show raw tiles for sensor topics</label>
     <button type="button" id="shake">Shake the board</button>
     <button type="button" id="irbtn">Send IR message</button>
+    <button type="button" id="tapbtn">Tap the touch sensor</button>
     <button type="button" id="csv">Download CSV</button>
     <button type="button" id="clear">Clear history</button>
   </div>
@@ -222,9 +223,10 @@
     if (leaf === 'distance') return 'dist';
     if (leaf.startsWith('accel/')) return 'accel';
     if (leaf.startsWith('ir/')) return 'ir';
+    if (leaf === 'touch' || leaf.startsWith('touch/')) return 'touch';
     return null;
   }
-  const WIDGET_ORDER = ['temp', 'hum', 'light', 'dist', 'accel', 'ir'];
+  const WIDGET_ORDER = ['temp', 'hum', 'light', 'dist', 'accel', 'ir', 'touch'];
 
   function baseCard(title) {
     const el = document.createElement('div');
@@ -772,7 +774,92 @@
     };
   }
 
-  const FACTORY = { temp: TempWidget, hum: HumWidget, light: LightWidget, dist: DistWidget, accel: AccelWidget, ir: IRWidget };
+  // ---------------------------------------------------------------------------
+  // Touch: pad that lights up, touch count and a 60 second timeline
+  // ---------------------------------------------------------------------------
+  function TouchWidget() {
+    const c = baseCard('Touch');
+    const TL_MS = 60000, TX0 = 10, TW = 240, TY = 126, TH = 12;
+    c.body.innerHTML =
+      '<svg class="vis" viewBox="0 0 260 152" role="img" aria-label="Touch sensor">' +
+      '<circle class="ripple" cx="60" cy="58" r="36" fill="none" stroke="var(--accent)" stroke-width="3" opacity="0"/>' +
+      '<circle cx="60" cy="58" r="36" fill="var(--panel)" stroke="var(--muted)" stroke-width="3"/>' +
+      '<circle cx="60" cy="58" r="22" fill="none" stroke="var(--line)" stroke-width="2"/>' +
+      '<circle class="glow" cx="60" cy="58" r="36" fill="var(--accent)" opacity="0"/>' +
+      '<text class="big state" x="125" y="54" font-size="28">Idle</text>' +
+      '<text class="muted count" font-size="12" x="125" y="76"></text>' +
+      '<text class="muted since" font-size="12" x="125" y="94"></text>' +
+      '<rect x="' + TX0 + '" y="' + TY + '" width="' + TW + '" height="' + TH + '" rx="3" fill="var(--line)" opacity="0.5"/>' +
+      '<g class="strip"></g>' +
+      '<text class="tick" x="' + TX0 + '" y="150">60 s ago</text>' +
+      '<text class="tick" x="' + (TX0 + TW) + '" y="150" text-anchor="end">now</text>' +
+      '</svg>';
+    const glowEl = c.body.querySelector('.glow');
+    const rippleEl = c.body.querySelector('.ripple');
+    const state = c.body.querySelector('.state');
+    const countEl = c.body.querySelector('.count');
+    const sinceEl = c.body.querySelector('.since');
+    const strip = c.body.querySelector('.strip');
+
+    let touched = false, startedAt = 0, lastTouch = null;
+    let reported = null, local = 0;          // count from the board, or counted here as a fallback
+    let glow = 0, ripple = 1, acc = 1, events = [];
+    return {
+      el: c.el,
+      update(leaf, text, time, restore) {
+        if (leaf === 'touch/count') {
+          const n = parseInt(text, 10);
+          if (isFinite(n)) reported = n;
+          stamp(c, time);
+          return;
+        }
+        if (leaf !== 'touch') return;
+        const on = parseFloat(text) > 0.5;
+        if (restore) {
+          if (on) lastTouch = time;            // earlier value from this browser: no animation
+        } else if (on && !touched) {
+          touched = true; startedAt = time; lastTouch = time; ripple = 0; local++;
+          events.push({ s: time, e: null });
+        } else if (!on && touched) {
+          touched = false; lastTouch = time;
+          const ev = events[events.length - 1];
+          if (ev && ev.e === null) ev.e = time;
+        }
+        acc = 1;
+        stamp(c, time);
+      },
+      frame(dt) {
+        glow = smooth(glow, touched ? 1 : 0, dt, 0.05);
+        glowEl.setAttribute('opacity', (0.9 * glow).toFixed(2));
+        if (ripple < 1) {
+          ripple = Math.min(1, ripple + dt / 0.7);
+          rippleEl.setAttribute('r', (36 + 22 * ripple).toFixed(1));
+          rippleEl.setAttribute('opacity', (0.7 * (1 - ripple)).toFixed(2));
+        }
+        acc += dt;
+        if (acc < 0.2) return;
+        acc = 0;
+        const now = Date.now();
+        state.textContent = touched ? 'Touched' : 'Idle';
+        state.style.fill = touched ? 'var(--accent)' : '';
+        const n = reported !== null ? reported : local;
+        countEl.textContent = n + (n === 1 ? ' touch' : ' touches');
+        sinceEl.textContent = touched ? 'held ' + ((now - startedAt) / 1000).toFixed(1) + ' s'
+                            : lastTouch ? 'touched ' + ageText(lastTouch) : 'no touch yet';
+        events = events.filter((ev) => (ev.e || now) > now - TL_MS);
+        let g = '';
+        for (const ev of events) {
+          const s = Math.max(ev.s, now - TL_MS), e = ev.e || now;
+          const x = TX0 + (s - (now - TL_MS)) / TL_MS * TW;
+          const w = Math.max(1, Math.min(Math.max(2.5, (e - s) / TL_MS * TW), TX0 + TW - x));
+          g += '<rect x="' + x.toFixed(1) + '" y="' + TY + '" width="' + w.toFixed(1) + '" height="' + TH + '" rx="1.5" fill="var(--accent)"/>';
+        }
+        strip.innerHTML = g;
+      }
+    };
+  }
+
+  const FACTORY = { temp: TempWidget, hum: HumWidget, light: LightWidget, dist: DistWidget, accel: AccelWidget, ir: IRWidget, touch: TouchWidget };
 
   // ---------------------------------------------------------------------------
   // Boards and widgets
@@ -1031,6 +1118,20 @@
     setInterval(tickAccel, 200);
     setTimeout(() => sendIR('HELLO'), 1500);
     setInterval(() => sendIR(), 15000);
+
+    // touch sensor: a tap now and then, plus a heartbeat like the real sketch
+    let touchState = 0, touchCount = 0;
+    const sendTouch = () => { send('touch', touchState); send('touch/count', touchCount); };
+    const press = (ms) => {
+      if (touchState) return;
+      touchState = 1; touchCount++; sendTouch();
+      setTimeout(() => { touchState = 0; sendTouch(); }, ms);
+    };
+    const randomTap = () => { press(rnd(200, 1600)); setTimeout(randomTap, rnd(3000, 9000)); };
+    sendTouch();
+    setInterval(sendTouch, 5000);
+    setTimeout(randomTap, 2500);
+    $('tapbtn').addEventListener('click', () => press(700));
 
     $('shake').addEventListener('click', () => { shakeUntil = Date.now() + 2000; });
     $('irbtn').addEventListener('click', () => sendIR());
