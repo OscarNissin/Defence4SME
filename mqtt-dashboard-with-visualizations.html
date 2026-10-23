@@ -174,7 +174,7 @@
 <main>
   <div id="boards"></div>
   <div id="raw"></div>
-  <p class="empty" id="empty">Waiting for data. Each board gets its own visual cards as soon as it publishes: temperature, humidity, light, distance, accelerometer, touch and infrared messages. Anything else is shown as a plain tile with a graph.</p>
+  <p class="empty" id="empty">Waiting for data. Each board gets its own visual cards as soon as it publishes: temperature, humidity, light, distance, accelerometer, gyroscope, touch and infrared messages. Anything else is shown as a plain tile with a graph.</p>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
@@ -224,11 +224,12 @@
     if (leaf === 'light' || leaf === 'light_percent') return 'light';
     if (leaf === 'distance') return 'dist';
     if (leaf.startsWith('accel/')) return 'accel';
+    if (leaf.startsWith('gyro/')) return 'gyro';
     if (leaf.startsWith('ir/')) return 'ir';
     if (leaf === 'touch' || leaf.startsWith('touch/')) return 'touch';
     return null;
   }
-  const WIDGET_ORDER = ['temp', 'hum', 'light', 'dist', 'accel', 'ir', 'touch'];
+  const WIDGET_ORDER = ['temp', 'hum', 'light', 'dist', 'accel', 'gyro', 'ir', 'touch'];
 
   function baseCard(title) {
     const el = document.createElement('div');
@@ -861,7 +862,75 @@
     };
   }
 
-  const FACTORY = { temp: TempWidget, hum: HumWidget, light: LightWidget, dist: DistWidget, accel: AccelWidget, ir: IRWidget, touch: TouchWidget };
+  // ---------------------------------------------------------------------------
+  // Gyroscope: turntable dial (click to reset) and rotation rate bars
+  // ---------------------------------------------------------------------------
+  function GyroWidget() {
+    const c = baseCard('Gyroscope');
+    const GYRO_MAX = 500;                     // bar range in degrees per second (the sketch uses +-500)
+    const BX = 150, BW = 140, BC = BX + BW / 2;
+    const rows = [['x', '--ax', 30], ['y', '--ay', 64], ['z', '--az', 98]];
+    let svg = '<svg class="vis" viewBox="0 0 300 150" role="img" aria-label="Gyroscope">';
+    svg += '<g class="dialwrap" style="cursor:pointer"><title>Turn about the z axis. Click to reset to 0.</title>' +
+           '<circle class="dial" cx="60" cy="62" r="46"/>';
+    for (let a = 0; a < 360; a += 90) {
+      const s = Math.sin(a * Math.PI / 180), k = Math.cos(a * Math.PI / 180);
+      svg += '<line x1="' + (60 + 46 * s).toFixed(1) + '" y1="' + (62 - 46 * k).toFixed(1) + '" x2="' + (60 + 38 * s).toFixed(1) + '" y2="' + (62 - 38 * k).toFixed(1) + '" stroke="var(--muted)" stroke-width="2"/>';
+    }
+    svg += '<g class="hand"><line x1="60" y1="62" x2="60" y2="26" stroke="var(--accent)" stroke-width="4" stroke-linecap="round"/>' +
+           '<circle cx="60" cy="62" r="5" fill="var(--ink)"/></g></g>';
+    svg += '<text class="muted turned" x="60" y="128" font-size="12" text-anchor="middle">turned 0°</text>';
+    rows.forEach((r) => {
+      svg += '<text class="muted" x="136" y="' + (r[2] + 9) + '" font-size="12" text-anchor="middle">' + r[0] + '</text>' +
+             '<rect x="' + BX + '" y="' + r[2] + '" width="' + BW + '" height="10" rx="3" fill="var(--line)" opacity="0.5"/>' +
+             '<rect class="bar-' + r[0] + '" x="' + BC + '" y="' + r[2] + '" width="0" height="10" fill="var(' + r[1] + ')"/>' +
+             '<line x1="' + BC + '" x2="' + BC + '" y1="' + (r[2] - 3) + '" y2="' + (r[2] + 13) + '" stroke="var(--muted)" stroke-width="1"/>' +
+             '<text class="muted val-' + r[0] + '" x="290" y="' + (r[2] - 4) + '" font-size="11" text-anchor="end"></text>';
+    });
+    svg += '<text class="state" x="150" y="138" font-size="14" font-weight="600">Waiting for data</text></svg>';
+    c.body.innerHTML = svg;
+    const hand = c.body.querySelector('.hand');
+    const turnedEl = c.body.querySelector('.turned');
+    const stateEl = c.body.querySelector('.state');
+    const bars = ['x', 'y', 'z'].map((k) => ({ bar: c.body.querySelector('.bar-' + k), val: c.body.querySelector('.val-' + k) }));
+    c.body.querySelector('.dialwrap').addEventListener('click', () => { heading = 0; });
+
+    let rate = [0, 0, 0], shown = [0, 0, 0], heading = 0, lastMsg = 0, live = false;
+    return {
+      el: c.el,
+      update(leaf, text, time, restore) {
+        if (leaf !== 'gyro/xyz') return;
+        const p = text.split(',').map(parseFloat);
+        if (p.length !== 3 || !p.every(isFinite)) return;
+        rate = p; lastMsg = performance.now();
+        if (!restore) live = true;           // an earlier value from this browser must not turn the dial
+        stamp(c, time);
+      },
+      frame(dt) {
+        const stale = live && performance.now() - lastMsg > 1500;
+        for (let i = 0; i < 3; i++) {
+          shown[i] = smooth(shown[i], stale ? 0 : rate[i], dt, 0.12);
+          const w = clamp(shown[i] / GYRO_MAX, -1, 1) * (BW / 2);
+          bars[i].bar.setAttribute('x', (w >= 0 ? BC : BC + w).toFixed(1));
+          bars[i].bar.setAttribute('width', Math.abs(w).toFixed(1));
+          bars[i].val.textContent = shown[i].toFixed(0) + ' °/s';
+        }
+        if (live && Math.abs(shown[2]) > 2) heading += shown[2] * dt;      // ignore sensor noise at rest
+        hand.setAttribute('transform', 'rotate(' + (-heading).toFixed(1) + ' 60 62)');
+        turnedEl.textContent = 'turned ' + Math.round(heading) + '°';
+        const total = Math.hypot(shown[0], shown[1], shown[2]);
+        let txt;
+        if (!lastMsg) txt = 'Waiting for data';
+        else if (stale) txt = 'No data';
+        else if (total < 5) txt = 'Still';
+        else if (total < 60) txt = 'Turning';
+        else txt = 'Spinning';
+        if (stateEl.textContent !== txt) stateEl.textContent = txt;
+      }
+    };
+  }
+
+  const FACTORY = { temp: TempWidget, hum: HumWidget, light: LightWidget, dist: DistWidget, accel: AccelWidget, gyro: GyroWidget, ir: IRWidget, touch: TouchWidget };
 
   // ---------------------------------------------------------------------------
   // Boards and widgets
